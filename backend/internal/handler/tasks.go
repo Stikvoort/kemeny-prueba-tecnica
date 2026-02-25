@@ -369,6 +369,37 @@ func UpdateTask(w http.ResponseWriter, r *http.Request) {
 func DeleteTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 
+	// verify role and ownership
+	userID := middleware.GetUserID(r)
+
+	var userRole string
+	err := db.Pool.QueryRow(r.Context(),
+		"SELECT role FROM users WHERE id = $1", userID,
+	).Scan(&userRole)
+
+	if err != nil {
+		http.Error(w, `{"error": "failed to verify authorization"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var creatorID string
+
+	if userRole != "admin" {
+		err = db.Pool.QueryRow(r.Context(),
+			"SELECT creator_id FROM tasks WHERE id = $1", taskID,
+		).Scan(&creatorID)
+
+		if err != nil {
+			http.Error(w, `{"error": "failed to verify authorization"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if userID != creatorID || userRole != "admin" {
+		http.Error(w, `{"error": "unauthorized to delete this task"}`, http.StatusForbidden)
+		return
+	}
+
 	result, err := db.Pool.Exec(r.Context(),
 		"DELETE FROM tasks WHERE id = $1", taskID,
 	)
