@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/KemenyStudio/task-manager/internal/db"
+	"github.com/KemenyStudio/task-manager/internal/llm"
 	"github.com/KemenyStudio/task-manager/internal/middleware"
 	"github.com/KemenyStudio/task-manager/internal/model"
 )
@@ -415,6 +416,116 @@ func DeleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ClassifyTask classifies a task based on its title and description using an LLM.
+func ClassifyTask(w http.ResponseWriter, r *http.Request) {
+
+	// Get task ID from URL
+	taskID := chi.URLParam(r, "id")
+
+	// Fetch the task from DB
+	var t model.Task
+	err := db.Pool.QueryRow(r.Context(),
+		`SELECT id, title, description, status, priority, category, summary,
+				creator_id, assignee_id, due_date, estimated_hours, actual_hours,
+				created_at, updated_at
+		 FROM tasks WHERE id = $1`, taskID,
+	).Scan(
+		&t.ID, &t.Title, &t.Description, &t.Status, &t.Priority,
+		&t.Category, &t.Summary, &t.CreatorID, &t.AssigneeID,
+		&t.DueDate, &t.EstimatedHours, &t.ActualHours,
+		&t.CreatedAt, &t.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		http.Error(w, `{"error": "task not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "failed to get task"}`, http.StatusInternalServerError)
+		return
+	}
+
+	client := llm.NewOpenAIClient()
+
+	var desc string
+	if t.Description != nil {
+		desc = *t.Description
+	} else {
+		desc = ""
+	}
+
+	llmResp, err := client.ClassifyTask(r.Context(), t.Title, desc)
+	if err != nil {
+		http.Error(w, `{"error": "failed to classify task"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Save tags (insert if not exist, then link to task)
+	var tagIDs []string
+	for _, tagName := range llmResp.Tags {
+		var tagID string
+		err := db.Pool.QueryRow(r.Context(),
+			"INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
+			tagName,
+		).Scan(&tagID)
+		if err != nil {
+			http.Error(w, `{"error": "failed to save tag"}`, http.StatusInternalServerError)
+			return
+		}
+		tagIDs = append(tagIDs, tagID)
+		// Link tag to task (ignore if already linked)
+		_, _ = db.Pool.Exec(r.Context(),
+			"INSERT INTO task_tags (task_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+			taskID, tagID,
+		)
+	}
+
+	// Update task with classification
+	_, err = db.Pool.Exec(r.Context(),
+		`UPDATE tasks SET priority=$1, category=$2, summary=$3, updated_at=NOW() WHERE id=$4`,
+		llmResp.Priority, llmResp.Category, llmResp.Summary, taskID,
+	)
+	if err != nil {
+		http.Error(w, `{"error": "failed to update task"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Reload updated task (with tags)
+	var updated model.Task
+	err = db.Pool.QueryRow(r.Context(),
+		`SELECT id, title, description, status, priority, category, summary,
+				creator_id, assignee_id, due_date, estimated_hours, actual_hours,
+				created_at, updated_at
+		 FROM tasks WHERE id = $1`, taskID,
+	).Scan(
+		&updated.ID, &updated.Title, &updated.Description, &updated.Status, &updated.Priority,
+		&updated.Category, &updated.Summary, &updated.CreatorID, &updated.AssigneeID,
+		&updated.DueDate, &updated.EstimatedHours, &updated.ActualHours,
+		&updated.CreatedAt, &updated.UpdatedAt,
+	)
+	if err != nil {
+		http.Error(w, `{"error": "failed to reload task"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Load tags for updated task
+	tagRows, err := db.Pool.Query(r.Context(),
+		`SELECT t.id, t.name, t.color, t.created_at
+		 FROM tags t
+		 INNER JOIN task_tags tt ON t.id = tt.tag_id
+		 WHERE tt.task_id = $1`, updated.ID)
+	if err == nil {
+		defer tagRows.Close()
+		for tagRows.Next() {
+			var tag model.Tag
+			_ = tagRows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt)
+			updated.Tags = append(updated.Tags, tag)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updated)
 }
 
 // GetTaskHistory returns the edit history for a task.
