@@ -2,7 +2,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: string;
+  role: 'admin' | 'member';
   avatar_url?: string;
   created_at: string;
   updated_at: string;
@@ -45,8 +45,8 @@ export interface DashboardStats {
 export interface CreateTaskRequest {
   title: string;
   description?: string;
-  status?: string;
-  priority?: string;
+  status?: 'todo' | 'in_progress' | 'review' | 'done';
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   assignee_id?: string;
   due_date?: string;
   estimated_hours?: number;
@@ -55,8 +55,8 @@ export interface CreateTaskRequest {
 export interface UpdateTaskRequest {
   title?: string;
   description?: string;
-  status?: string;
-  priority?: string;
+  status?: 'todo' | 'in_progress' | 'review' | 'done';
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   assignee_id?: string;
   due_date?: string;
   estimated_hours?: number;
@@ -69,6 +69,6 @@ export interface LoginResponse {
     id: string;
     email: string;
     name: string;
-    role: string;
+    role: 'admin' | 'member';
   };
 }
