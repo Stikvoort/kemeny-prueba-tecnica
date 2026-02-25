@@ -9,7 +9,7 @@ Lista de los problemas encontrados, ordenados por severidad (crítico → bajo)
 critico, seguridad
  los roles estan definidos, pero no estan usadas, todos los usarios tienen acesso a todos los functiones.
 
-critico, frontend/src/app/tasks/[id]/page.tsx
+alto, frontend/src/app/tasks/[id]/page.tsx
  En caso de fallas de 401 o 403, despues no hay recursos propios para guiar el usuario.
 
 medio, database/init.sql, L17, L27, L28
